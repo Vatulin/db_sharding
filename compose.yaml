@@ -1,0 +1,59 @@
+x-db-environment: &db-environment
+  POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+  POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+  PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+
+x-db-common: &db-common
+  environment: *db-environment
+  restart: unless-stopped
+  shm_size: 256mb
+  healthcheck:
+    test:
+      - CMD-SHELL
+      - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+    interval: 5s
+    timeout: 5s
+    retries: 20
+    start_period: 20s
+
+services:
+  coordinator:
+    <<: *db-common
+    image: ${CITUS_IMAGE}
+    ports:
+      - "${CITUS_PORT}:5432"
+    volumes:
+      - coordinator_data:/var/lib/postgresql
+  worker-1:
+    <<: *db-common
+    image: ${CITUS_IMAGE}
+    volumes:
+      - worker_1_data:/var/lib/postgresql
+
+  worker-2:
+    <<: *db-common
+    image: ${CITUS_IMAGE}
+    volumes:
+      - worker_2_data:/var/lib/postgresql
+  worker-3:
+    <<: *db-common
+    image: ${CITUS_IMAGE}
+    profiles: ["scale"]
+    volumes:
+      - worker_3_data:/var/lib/postgresql
+
+  baseline:
+    <<: *db-common
+    image: ${POSTGRES_IMAGE}
+    ports:
+      - "${BASELINE_PORT}:5432"
+    volumes:
+      - baseline_data:/var/lib/postgresql
+
+volumes:
+  coordinator_data:
+  worker_1_data:
+  worker_2_data:
+  worker_3_data:
+  baseline_data:

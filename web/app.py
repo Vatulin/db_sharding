@@ -8,10 +8,10 @@ from flask import Flask, flash, redirect, render_template, request, url_for
 
 try:
     from .db import DatabaseError, get_dashboard_summary
-    from .services import ValidationError, create_order, get_data
+    from .services import ValidationError, create_order, get_cluster_data, get_data
 except ImportError:
     from db import DatabaseError, get_dashboard_summary
-    from services import ValidationError, create_order, get_data
+    from services import ValidationError, create_order, get_cluster_data, get_data
 
 
 def create_app() -> Flask:
@@ -89,7 +89,25 @@ def create_app() -> Flask:
 
     @app.get("/cluster")
     def cluster():
-        return render_template("cluster.html")
+        try:
+            cluster_data = get_cluster_data()
+        except DatabaseError as error:
+            return (
+                render_template(
+                    "cluster.html",
+                    database_available=False,
+                    cluster=None,
+                    error_message=str(error),
+                ),
+                503,
+            )
+
+        return render_template(
+            "cluster.html",
+            database_available=True,
+            cluster=cluster_data,
+            error_message=None,
+        )
 
     @app.get("/checks")
     def checks():

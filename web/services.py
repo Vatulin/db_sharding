@@ -13,6 +13,7 @@ except ImportError:
 
 USERS_LIMIT = 50
 ORDERS_LIMIT = 100
+SHARDS_LIMIT = 250
 MAX_ORDER_AMOUNT = Decimal("999999999999.99")
 
 
@@ -106,6 +107,50 @@ def get_data(user_id_text: str | None) -> dict[str, Any]:
         "statuses": statuses,
         "users": users,
         "orders": orders,
+    }
+
+
+def get_cluster_data() -> dict[str, Any]:
+    """Возвращает метаданные узлов и размещений шардов Citus."""
+    nodes = fetch_all(
+        """
+            SELECT
+                nodeid,
+                groupid,
+                nodename,
+                nodeport,
+                noderole,
+                isactive,
+                shouldhaveshards
+            FROM pg_dist_node
+            ORDER BY groupid, nodeid;
+        """
+    )
+    shard_total = fetch_one("SELECT count(*) AS count FROM citus_shards;")
+    shards = fetch_all(
+        """
+            SELECT
+                table_name,
+                shardid,
+                shard_name,
+                citus_table_type,
+                nodename,
+                nodeport,
+                pg_size_pretty(shard_size) AS shard_size
+            FROM citus_shards
+            ORDER BY table_name, shardid, nodename, nodeport
+            LIMIT %s;
+        """,
+        (SHARDS_LIMIT,),
+    )
+
+    total = int(shard_total["count"]) if shard_total else 0
+
+    return {
+        "nodes": nodes,
+        "shards": shards,
+        "shard_total": total,
+        "shards_limited": total > len(shards),
     }
 
 

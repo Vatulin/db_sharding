@@ -5,23 +5,83 @@
 {% block content %}
   <h2>Кластер</h2>
 
-  <p class="notice">
-    Страница подготовлена для просмотра узлов и шардов. Получение данных и
-    административные действия будут подключены после реализации SQL-сценариев управления кластером.
-  </p>
+  {% if not database_available %}
+    <p>Не удалось получить состояние кластера.</p>
+    <pre>{{ error_message }}</pre>
+  {% else %}
+    <p><a href="{{ url_for('cluster') }}">Обновить состояние</a></p>
 
-  <section class="panel">
-    <h3>Рабочие узлы</h3>
-    <p>Сведения об узлах пока не загружены.</p>
-  </section>
+    <section>
+      <h3>Зарегистрированные узлы</h3>
+      {% if cluster.nodes %}
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">ID узла</th>
+              <th scope="col">Группа</th>
+              <th scope="col">Адрес</th>
+              <th scope="col">Порт</th>
+              <th scope="col">Роль</th>
+              <th scope="col">Активен</th>
+              <th scope="col">Размещает шарды</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for node in cluster.nodes %}
+              <tr>
+                <td>{{ node.nodeid }}</td>
+                <td>{{ node.groupid }}</td>
+                <td>{{ node.nodename }}</td>
+                <td>{{ node.nodeport }}</td>
+                <td>{{ node.noderole }}</td>
+                <td>{{ 'Да' if node.isactive else 'Нет' }}</td>
+                <td>{{ 'Да' if node.shouldhaveshards else 'Нет' }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p>В метаданных Citus нет зарегистрированных узлов.</p>
+      {% endif %}
+    </section>
 
-  <section class="panel">
-    <h3>Размещение шардов</h3>
-    <p>Сведения о шардах и их размерах пока не загружены.</p>
-  </section>
+    <section>
+      <h3>Размещение шардов</h3>
+      <p>Всего размещений: {{ cluster.shard_total }}.</p>
 
-  <section class="panel">
-    <h3>Действия</h3>
-    <p>Добавление третьего узла, балансировка и обновление статуса станут доступны после проверки соответствующих SQL-операций.</p>
-  </section>
+      {% if cluster.shards %}
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Таблица</th>
+              <th scope="col">ID шарда</th>
+              <th scope="col">Имя шарда</th>
+              <th scope="col">Тип таблицы</th>
+              <th scope="col">Узел</th>
+              <th scope="col">Порт</th>
+              <th scope="col">Размер</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for shard in cluster.shards %}
+              <tr>
+                <td>{{ shard.table_name }}</td>
+                <td>{{ shard.shardid }}</td>
+                <td>{{ shard.shard_name }}</td>
+                <td>{{ shard.citus_table_type }}</td>
+                <td>{{ shard.nodename }}</td>
+                <td>{{ shard.nodeport }}</td>
+                <td>{{ shard.shard_size }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% if cluster.shards_limited %}
+          <p>Показаны первые 250 размещений шардов.</p>
+        {% endif %}
+      {% else %}
+        <p>Распределённые и эталонные таблицы ещё не созданы.</p>
+      {% endif %}
+    </section>
+  {% endif %}
 {% endblock %}

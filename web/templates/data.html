@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}Данные — Стенд Citus{% endblock %}
+
+{% block content %}
+  <h2>Данные</h2>
+
+  {% if not database_available %}
+    <p>Координатор недоступен или схема данных ещё не подготовлена.</p>
+    <pre>{{ error_message }}</pre>
+  {% else %}
+    <form method="get" action="{{ url_for('data') }}">
+      <label for="filter-user-id">Идентификатор пользователя</label>
+      <input
+        id="filter-user-id"
+        name="user_id"
+        type="number"
+        min="1"
+        step="1"
+        value="{{ data.selected_user_id or '' }}"
+      >
+      <button type="submit">Найти</button>
+      <a href="{{ url_for('data') }}">Сбросить фильтр</a>
+    </form>
+
+    <section>
+      <h3>Пользователи</h3>
+      {% if data.users %}
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">ID</th>
+              <th scope="col">Имя</th>
+              <th scope="col">Электронная почта</th>
+              <th scope="col">Создан</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for user in data.users %}
+              <tr>
+                <td>{{ user.user_id }}</td>
+                <td>{{ user.name }}</td>
+                <td>{{ user.email }}</td>
+                <td>{{ user.created_at }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p>Пользователи не найдены.</p>
+      {% endif %}
+    </section>
+
+    <section>
+      <h3>Заказы</h3>
+      {% if data.orders %}
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Пользователь</th>
+              <th scope="col">Заказ</th>
+              <th scope="col">Статус</th>
+              <th scope="col">Сумма</th>
+              <th scope="col">Создан</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for order in data.orders %}
+              <tr>
+                <td>{{ order.user_id }}</td>
+                <td>{{ order.order_id }}</td>
+                <td>{{ order.status_name }}</td>
+                <td>{{ order.total_amount }}</td>
+                <td>{{ order.created_at }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p>Заказы не найдены.</p>
+      {% endif %}
+    </section>
+
+    <section>
+      <h3>Создать заказ</h3>
+      {% if data.statuses %}
+        <form method="post" action="{{ url_for('add_order') }}">
+          <p>
+            <label for="order-user-id">Идентификатор пользователя</label>
+            <input
+              id="order-user-id"
+              name="user_id"
+              type="number"
+              min="1"
+              step="1"
+              value="{{ data.selected_user_id or '' }}"
+              required
+            >
+          </p>
+          <p>
+            <label for="order-status">Статус</label>
+            <select id="order-status" name="status_id" required>
+              {% for status in data.statuses %}
+                <option value="{{ status.status_id }}">{{ status.name }}</option>
+              {% endfor %}
+            </select>
+          </p>
+          <p>
+            <label for="order-amount">Сумма</label>
+            <input
+              id="order-amount"
+              name="total_amount"
+              type="number"
+              min="0.01"
+              step="0.01"
+              required
+            >
+          </p>
+          <button type="submit">Создать заказ</button>
+        </form>
+      {% else %}
+        <p>Справочник статусов не заполнен.</p>
+      {% endif %}
+    </section>
+  {% endif %}
+{% endblock %}

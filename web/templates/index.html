@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}Сводка состояния — Стенд Citus{% endblock %}
+
+{% block content %}
+  <h2>Сводка состояния</h2>
+
+  {% if database_available %}
+    <p>Координатор доступен.</p>
+
+    <table>
+      <caption>Данные кластера</caption>
+      <thead>
+        <tr>
+          <th scope="col">Показатель</th>
+          <th scope="col">Значение</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Рабочие узлы</td>
+          <td>{{ summary.workers_count }}</td>
+        </tr>
+        <tr>
+          <td>Пользователи</td>
+          <td>{{ summary.users_count }}</td>
+        </tr>
+        <tr>
+          <td>Заказы</td>
+          <td>{{ summary.orders_count }}</td>
+        </tr>
+        <tr>
+          <td>События</td>
+          <td>{{ summary.events_count }}</td>
+        </tr>
+      </tbody>
+    </table>
+  {% else %}
+    <p>Координатор недоступен или схема данных ещё не подготовлена.</p>
+    <pre>{{ error_message }}</pre>
+  {% endif %}
+{% endblock %}

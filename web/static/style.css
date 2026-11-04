@@ -1,0 +1,169 @@
+:root {
+  color: #1f2937;
+  background: #f3f5f7;
+  font-family: Arial, sans-serif;
+  line-height: 1.5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+header {
+  padding: 1rem max(1.25rem, calc((100% - 1100px) / 2));
+  color: #ffffff;
+  background: #1e3a5f;
+}
+
+h1,
+h2,
+h3 {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 0.75rem;
+  font-size: 1.5rem;
+}
+
+nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+nav a {
+  color: #ffffff;
+  text-decoration: none;
+}
+
+nav a:hover,
+nav a:focus-visible {
+  text-decoration: underline;
+}
+
+main {
+  width: min(1100px, calc(100% - 2.5rem));
+  margin: 2rem auto;
+}
+
+section,
+table,
+form,
+.notice,
+.message {
+  margin-bottom: 1.25rem;
+}
+
+.panel,
+.notice,
+form,
+table {
+  padding: 1rem;
+  background: #ffffff;
+  border: 1px solid #d7dce2;
+  border-radius: 0.35rem;
+}
+
+.notice {
+  border-left: 4px solid #2563eb;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow-x: auto;
+}
+
+caption {
+  margin-bottom: 0.5rem;
+  font-weight: 700;
+  text-align: left;
+}
+
+th,
+td {
+  padding: 0.65rem;
+  text-align: left;
+  border-bottom: 1px solid #d7dce2;
+}
+
+th {
+  background: #eef2f7;
+}
+
+tr:last-child td {
+  border-bottom: 0;
+}
+
+label {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-weight: 700;
+}
+
+input,
+select,
+button {
+  min-height: 2.4rem;
+  padding: 0.45rem 0.65rem;
+  font: inherit;
+}
+
+input,
+select {
+  max-width: 100%;
+  border: 1px solid #9ca3af;
+  border-radius: 0.25rem;
+}
+
+button {
+  color: #ffffff;
+  cursor: pointer;
+  background: #2563eb;
+  border: 1px solid #1d4ed8;
+  border-radius: 0.25rem;
+}
+
+button:hover,
+button:focus-visible {
+  background: #1d4ed8;
+}
+
+.message {
+  padding: 0.75rem 1rem;
+  border-radius: 0.25rem;
+}
+
+.message-success {
+  color: #14532d;
+  background: #dcfce7;
+}
+
+.message-error {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+pre {
+  padding: 0.75rem;
+  overflow-x: auto;
+  color: #7f1d1d;
+  background: #fef2f2;
+}
+
+@media (max-width: 640px) {
+  main {
+    width: min(100% - 1.5rem, 1100px);
+    margin: 1.25rem auto;
+  }
+
+  th,
+  td {
+    padding: 0.45rem;
+  }
+}

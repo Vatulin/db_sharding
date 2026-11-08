@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
+import re
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -75,18 +76,26 @@ def run_check_query(name: str, values: Any) -> dict[str, Any]:
 
 CLUSTER_SQL = Path(__file__).resolve().parent.parent / 'sql' / 'cluster'
 CLUSTER_ACTIONS = {
-    'add': ('add_worker.sql', 'worker-3 зарегистрирован. Теперь можно запустить балансировку.'),
+    'add': (None, ''),
     'rebalance': ('rebalance.sql', 'Фоновая балансировка запущена. Обновляйте состояние до её завершения.'),
-    'remove': ('remove_worker.sql', 'worker-3 исключён из кластера. Его контейнер теперь можно остановить.'),
+    'drain': (None, ''),
+    'remove': (None, ''),
 }
 
 
-def run_cluster_action(action: str) -> str:
-    """Исполняет только разрешённый SQL-файл, отдельными командами в autocommit."""
+def run_cluster_action(action: str, worker_name: str | None = None, node_id: str | None = None) -> str:
+    """Выполняет регистрацию с параметрами или разрешённый SQL-файл в autocommit."""
     if action not in CLUSTER_ACTIONS:
         raise ValidationError('Неизвестная операция управления кластером.')
+    if action == 'add':
+        worker_name = (worker_name or '').strip()
+        if not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', worker_name):
+            raise ValidationError('Имя воркера: от 1 до 63 строчных латинских букв, цифр или дефисов; дефис не может быть первым или последним.')
+        if worker_name in ('coordinator', 'baseline'):
+            raise ValidationError('Это имя занято служебным узлом.')
     filename, message = CLUSTER_ACTIONS[action]
-    script = (CLUSTER_SQL / filename).read_text(encoding='utf-8')
+    target_id = _parse_positive_integer(node_id, 'ID узла') if action in ('drain', 'remove') else None
+    script = (CLUSTER_SQL / filename).read_text(encoding='utf-8') if filename else ''
     with get_connection(autocommit=True) as connection:
         with connection.cursor() as cursor:
             # Сессионная блокировка сериализует административные запросы Flask.
@@ -94,6 +103,50 @@ def run_cluster_action(action: str) -> str:
             if not cursor.fetchone()['acquired']:
                 raise ValidationError('Другая операция управления уже выполняется.')
             try:
+                if action in ('add', 'drain', 'remove'):
+                    cursor.execute("SELECT 1 FROM citus_rebalance_status() WHERE state::text NOT IN ('finished', 'failed', 'cancelled')")
+                    if cursor.fetchone():
+                        raise ValidationError('Дождитесь завершения текущей балансировки.')
+                if action == 'add':
+                    cursor.execute('SELECT 1 FROM pg_dist_node WHERE nodename = %s AND nodeport = %s', (worker_name, 5432))
+                    if cursor.fetchone():
+                        raise ValidationError(f'{worker_name} уже зарегистрирован.')
+                    cursor.execute('SELECT citus_add_node(%s, %s)', (worker_name, 5432))
+                    message = f'{worker_name} зарегистрирован. Теперь можно запустить балансировку.'
+                elif action in ('drain', 'remove'):
+                    cursor.execute('SELECT * FROM pg_dist_node WHERE nodeid = %s', (target_id,))
+                    node = cursor.fetchone()
+                    if not node or node['groupid'] <= 0 or node['noderole'] != 'primary':
+                        raise ValidationError('Рабочий узел не найден. Обновите страницу кластера.')
+                    address = (node['nodename'], node['nodeport'])
+                    label = f"{address[0]}:{address[1]}"
+                    if action == 'drain':
+                        if not node['isactive']:
+                            raise ValidationError('Для освобождения узел должен быть активен.')
+                        cursor.execute('''SELECT 1 FROM pg_dist_node
+                            WHERE groupid > 0 AND groupid <> %s AND noderole = 'primary'
+                              AND isactive AND shouldhaveshards''', (node['groupid'],))
+                        if not cursor.fetchone():
+                            raise ValidationError('Нет другого активного воркера для переноса данных.')
+                        cursor.execute('SELECT citus_drain_node(%s, %s)', address)
+                        message = f'{label} освобождён. Теперь его можно удалить из кластера.'
+                    else:
+                        if node['shouldhaveshards']:
+                            raise ValidationError('Сначала освободите выбранный воркер.')
+                        cursor.execute('''SELECT 1 FROM pg_dist_placement p
+                            JOIN pg_dist_shard s USING (shardid)
+                            JOIN pg_dist_partition d ON d.logicalrelid = s.logicalrelid
+                            WHERE p.groupid = %s AND d.partmethod <> 'n' LIMIT 1''', (node['groupid'],))
+                        if cursor.fetchone():
+                            raise ValidationError('На воркере ещё есть распределённые шарды. Повторите освобождение.')
+                        # После переноса Citus удаляет исходные копии отложенно.
+                        # Узел должен оставаться в метаданных до завершения очистки.
+                        cursor.execute('CALL citus_cleanup_orphaned_resources()')
+                        cursor.execute('SELECT 1 FROM pg_dist_cleanup WHERE node_group_id = %s LIMIT 1', (node['groupid'],))
+                        if cursor.fetchone():
+                            raise ValidationError('Citus ещё не очистил ресурсы на воркере. Оставьте контейнер запущенным и повторите удаление позже.')
+                        cursor.execute('SELECT citus_remove_node(%s, %s)', address)
+                        message = f'{label} исключён из кластера. Его контейнер теперь можно остановить на сервере.'
                 for statement in script.split('-- step\n'):
                     if statement.strip():
                         cursor.execute(statement)
@@ -232,8 +285,6 @@ def get_cluster_data() -> dict[str, Any]:
     total = int(shard_total["count"]) if shard_total else 0
     jobs = fetch_all('SELECT * FROM citus_rebalance_status();')
     busy = any(str(job['state']) not in ('finished', 'failed', 'cancelled') for job in jobs)
-    third_node = next((node for node in nodes
-                       if node['nodename'] == 'worker-3' and node['nodeport'] == 5432), None)
 
     return {
         "nodes": nodes,
@@ -242,7 +293,6 @@ def get_cluster_data() -> dict[str, Any]:
         "shards_limited": total > len(shards),
         "jobs": jobs,
         "busy": busy,
-        "third_node": third_node,
     }
 
 

@@ -119,7 +119,7 @@ def create_app() -> Flask:
         # Старую форму нельзя повторно отправить после завершения операции.
         session['cluster_token'] = secrets.token_hex(32)
         try:
-            message = run_cluster_action(action)
+            message = run_cluster_action(action, request.form.get('worker_name'), request.form.get('node_id'))
         except ValidationError as error:
             flash(str(error), 'error')
         except DatabaseError:

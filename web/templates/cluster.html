@@ -13,28 +13,22 @@
 
     <section class="panel">
       <h3>Управление кластером</h3>
-      <p>Перед добавлением worker-3 запустите его контейнер в Ubuntu:</p>
+      <p>На сервере кластера запустите контейнер с выбранным именем. Для каждого нового воркера укажите отдельное имя:</p>
       <pre>cd /project
-docker compose --profile scale up -d --wait worker-3</pre>
+bash scripts/start-worker.sh --name worker-4</pre>
+      <p>После готовности контейнера добавьте его по тому же имени и запустите балансировку.</p>
       <form method="post" action="{{ url_for('manage_cluster', action='add') }}">
         <input type="hidden" name="csrf_token" value="{{ session.cluster_token }}">
-        <button {% if cluster.busy or cluster.third_node %}disabled{% endif %}>Добавить worker-3</button>
+        <label for="worker-name">Имя воркера</label>
+        <input id="worker-name" name="worker_name" required maxlength="63"
+               pattern="[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?" placeholder="worker-4"
+               {% if cluster.busy %}disabled{% endif %}>
+        <button {% if cluster.busy %}disabled{% endif %}>Добавить воркер</button>
       </form>
       <form method="post" action="{{ url_for('manage_cluster', action='rebalance') }}">
         <input type="hidden" name="csrf_token" value="{{ session.cluster_token }}">
         <button {% if cluster.busy %}disabled{% endif %}>Запустить балансировку</button>
       </form>
-      <p>Для вывода worker-3 сначала перенесите его распределённые шарды.
-         Команда ниже выполняется в Ubuntu и ожидает окончания переноса:</p>
-      <pre>cd /project
-docker compose exec -T coordinator psql -U postgres -d coursework -v ON_ERROR_STOP=1 &lt; sql/cluster/drain_worker.sql</pre>
-      <form method="post" action="{{ url_for('manage_cluster', action='remove') }}">
-        <input type="hidden" name="csrf_token" value="{{ session.cluster_token }}">
-        <button {% if cluster.busy or not cluster.third_node or cluster.third_node.shouldhaveshards %}disabled{% endif %}>Удалить освобождённый worker-3</button>
-      </form>
-      <p>Перед удалением сервер проверяет отсутствие распределённых шардов.
-         Оставшиеся копии справочников удаляет Citus. Контейнер можно остановить после исключения узла:</p>
-      <pre>docker compose stop worker-3</pre>
     </section>
 
     <section class="panel">
@@ -54,6 +48,11 @@ docker compose exec -T coordinator psql -U postgres -d coursework -v ON_ERROR_ST
     <section>
       <h3>Зарегистрированные узлы</h3>
       <p>Активность указана по метаданным Citus и не подтверждает сетевую доступность узла.</p>
+      <p>Чтобы вывести воркер, нажмите «Освободить» в его строке. Страница дождётся переноса шардов
+         на другие воркеры. Затем нажмите «Удалить из кластера».
+         Если перенос завершился с ошибкой, освобождение можно повторить.</p>
+      <p>Удаление доступно после освобождения; сервер проверяет отсутствие распределённых шардов.
+         Контейнер и его том остаются на сервере. Остановить контейнер можно после удаления узла из кластера.</p>
       {% if cluster.nodes %}
         <table>
           <thead>
@@ -65,6 +64,7 @@ docker compose exec -T coordinator psql -U postgres -d coursework -v ON_ERROR_ST
               <th scope="col">Роль</th>
               <th scope="col">Активен</th>
               <th scope="col">Размещает шарды</th>
+              <th scope="col">Действия</th>
             </tr>
           </thead>
           <tbody>
@@ -77,6 +77,22 @@ docker compose exec -T coordinator psql -U postgres -d coursework -v ON_ERROR_ST
                 <td>{{ node.noderole }}</td>
                 <td>{{ 'Да' if node.isactive else 'Нет' }}</td>
                 <td>{{ 'Да' if node.shouldhaveshards else 'Нет' }}</td>
+                <td>
+                  {% if node.groupid > 0 and node.noderole == 'primary' %}
+                    <form method="post" action="{{ url_for('manage_cluster', action='drain') }}">
+                      <input type="hidden" name="csrf_token" value="{{ session.cluster_token }}">
+                      <input type="hidden" name="node_id" value="{{ node.nodeid }}">
+                      <button {% if cluster.busy or not node.isactive %}disabled{% endif %}>Освободить</button>
+                    </form>
+                    <form method="post" action="{{ url_for('manage_cluster', action='remove') }}">
+                      <input type="hidden" name="csrf_token" value="{{ session.cluster_token }}">
+                      <input type="hidden" name="node_id" value="{{ node.nodeid }}">
+                      <button {% if cluster.busy or node.shouldhaveshards %}disabled{% endif %}>Удалить из кластера</button>
+                    </form>
+                  {% else %}
+                    Нет доступных действий
+                  {% endif %}
+                </td>
               </tr>
             {% endfor %}
           </tbody>

@@ -3,20 +3,21 @@
 from __future__ import annotations
 
 import os
+import secrets
 
-from flask import Flask, flash, redirect, render_template, request, url_for
+from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
 
 try:
     from .db import DatabaseError, get_dashboard_summary
-    from .services import ValidationError, create_order, get_cluster_data, get_data
+    from .services import ValidationError, create_order, get_cluster_data, get_data, run_cluster_action
 except ImportError:
     from db import DatabaseError, get_dashboard_summary
-    from services import ValidationError, create_order, get_cluster_data, get_data
+    from services import ValidationError, create_order, get_cluster_data, get_data, run_cluster_action
 
 
 def create_app() -> Flask:
     app = Flask(__name__)
-    app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "local-development-key")
+    app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY") or secrets.token_hex(32)
 
     @app.get("/")
     def index():
@@ -89,6 +90,7 @@ def create_app() -> Flask:
 
     @app.get("/cluster")
     def cluster():
+        session.setdefault('cluster_token', secrets.token_hex(32))
         try:
             cluster_data = get_cluster_data()
         except DatabaseError as error:
@@ -108,6 +110,24 @@ def create_app() -> Flask:
             cluster=cluster_data,
             error_message=None,
         )
+
+    @app.post('/cluster/<action>')
+    def manage_cluster(action):
+        token = session.get('cluster_token', '')
+        if not token or not secrets.compare_digest(token, request.form.get('csrf_token', '')):
+            abort(400, description='Форма устарела. Обновите страницу кластера.')
+        # Старую форму нельзя повторно отправить после завершения операции.
+        session['cluster_token'] = secrets.token_hex(32)
+        try:
+            message = run_cluster_action(action)
+        except ValidationError as error:
+            flash(str(error), 'error')
+        except DatabaseError:
+            app.logger.exception('Ошибка административной операции %s', action)
+            flash('Операция не подтверждена. Обновите состояние кластера; подробности в журнале Flask.', 'error')
+        else:
+            flash(message, 'success')
+        return redirect(url_for('cluster'), code=303)
 
     @app.get("/checks")
     def checks():

@@ -11,8 +11,49 @@
   {% else %}
     <p><a href="{{ url_for('cluster') }}">Обновить состояние</a></p>
 
+    <section class="panel">
+      <h3>Управление кластером</h3>
+      <p>Перед добавлением worker-3 запустите его контейнер в Ubuntu:</p>
+      <pre>cd /project
+docker compose --profile scale up -d --wait worker-3</pre>
+      <form method="post" action="{{ url_for('manage_cluster', action='add') }}">
+        <input type="hidden" name="csrf_token" value="{{ session.cluster_token }}">
+        <button {% if cluster.busy or cluster.third_node %}disabled{% endif %}>Добавить worker-3</button>
+      </form>
+      <form method="post" action="{{ url_for('manage_cluster', action='rebalance') }}">
+        <input type="hidden" name="csrf_token" value="{{ session.cluster_token }}">
+        <button {% if cluster.busy %}disabled{% endif %}>Запустить балансировку</button>
+      </form>
+      <p>Для вывода worker-3 сначала перенесите его распределённые шарды.
+         Команда ниже выполняется в Ubuntu и ожидает окончания переноса:</p>
+      <pre>cd /project
+docker compose exec -T coordinator psql -U postgres -d coursework -v ON_ERROR_STOP=1 &lt; sql/cluster/drain_worker.sql</pre>
+      <form method="post" action="{{ url_for('manage_cluster', action='remove') }}">
+        <input type="hidden" name="csrf_token" value="{{ session.cluster_token }}">
+        <button {% if cluster.busy or not cluster.third_node or cluster.third_node.shouldhaveshards %}disabled{% endif %}>Удалить освобождённый worker-3</button>
+      </form>
+      <p>Перед удалением сервер проверяет отсутствие распределённых шардов.
+         Оставшиеся копии справочников удаляет Citus. Контейнер можно остановить после исключения узла:</p>
+      <pre>docker compose stop worker-3</pre>
+    </section>
+
+    <section class="panel">
+      <h3>Состояние балансировки</h3>
+      {% if cluster.jobs %}
+        {% for job in cluster.jobs %}
+          <p>Задание {{ job.job_id }}: {{ job.state }}.</p>
+          <p>Начало: {{ job.started_at or 'Ещё не начато' }}.
+             Завершение: {{ job.finished_at or 'Не завершено' }}.</p>
+          <details><summary>Подробности задания</summary><pre>{{ job.details | tojson(indent=2) }}</pre></details>
+        {% endfor %}
+      {% else %}
+        <p>Заданий балансировки пока нет.</p>
+      {% endif %}
+    </section>
+
     <section>
       <h3>Зарегистрированные узлы</h3>
+      <p>Активность указана по метаданным Citus и не подтверждает сетевую доступность узла.</p>
       {% if cluster.nodes %}
         <table>
           <thead>

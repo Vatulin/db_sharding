@@ -34,10 +34,10 @@ def _connection_parameters() -> dict[str, Any]:
 
 
 @contextmanager
-def get_connection() -> Iterator[psycopg.Connection[Any]]:
+def get_connection(*, autocommit: bool = False) -> Iterator[psycopg.Connection[Any]]:
     """Открывает соединение и фиксирует успешную транзакцию при выходе."""
     try:
-        with psycopg.connect(**_connection_parameters()) as connection:
+        with psycopg.connect(**_connection_parameters(), autocommit=autocommit) as connection:
             yield connection
     except (psycopg.Error, ValueError) as error:
         raise DatabaseError(str(error)) from error

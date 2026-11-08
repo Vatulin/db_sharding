@@ -21,6 +21,7 @@ services:
   coordinator:
     <<: *db-common
     image: ${CITUS_IMAGE}
+    command: &citus-command ["postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=10", "-c", "max_wal_senders=10"]
     ports:
       - "${CITUS_PORT}:5432"
     volumes:
@@ -28,17 +29,20 @@ services:
   worker-1:
     <<: *db-common
     image: ${CITUS_IMAGE}
+    command: *citus-command
     volumes:
       - worker_1_data:/var/lib/postgresql
 
   worker-2:
     <<: *db-common
     image: ${CITUS_IMAGE}
+    command: *citus-command
     volumes:
       - worker_2_data:/var/lib/postgresql
   worker-3:
     <<: *db-common
     image: ${CITUS_IMAGE}
+    command: *citus-command
     profiles: ["scale"]
     volumes:
       - worker_3_data:/var/lib/postgresql

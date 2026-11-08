@@ -3,18 +3,46 @@
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any
 
 try:
-    from .db import fetch_all, fetch_one
+    from .db import fetch_all, fetch_one, get_connection
 except ImportError:
-    from db import fetch_all, fetch_one
+    from db import fetch_all, fetch_one, get_connection
 
 
 USERS_LIMIT = 50
 ORDERS_LIMIT = 100
 SHARDS_LIMIT = 250
 MAX_ORDER_AMOUNT = Decimal("999999999999.99")
+CLUSTER_SQL = Path(__file__).resolve().parent.parent / 'sql' / 'cluster'
+CLUSTER_ACTIONS = {
+    'add': ('add_worker.sql', 'worker-3 зарегистрирован. Теперь можно запустить балансировку.'),
+    'rebalance': ('rebalance.sql', 'Фоновая балансировка запущена. Обновляйте состояние до её завершения.'),
+    'remove': ('remove_worker.sql', 'worker-3 исключён из кластера. Его контейнер теперь можно остановить.'),
+}
+
+
+def run_cluster_action(action: str) -> str:
+    """Исполняет только разрешённый SQL-файл, отдельными командами в autocommit."""
+    if action not in CLUSTER_ACTIONS:
+        raise ValidationError('Неизвестная операция управления кластером.')
+    filename, message = CLUSTER_ACTIONS[action]
+    script = (CLUSTER_SQL / filename).read_text(encoding='utf-8')
+    with get_connection(autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            # Сессионная блокировка сериализует административные запросы Flask.
+            cursor.execute('SELECT pg_try_advisory_lock(824731, 8) AS acquired')
+            if not cursor.fetchone()['acquired']:
+                raise ValidationError('Другая операция управления уже выполняется.')
+            try:
+                for statement in script.split('-- step\n'):
+                    if statement.strip():
+                        cursor.execute(statement)
+            finally:
+                cursor.execute('SELECT pg_advisory_unlock(824731, 8)')
+    return message
 
 
 class ValidationError(ValueError):
@@ -145,12 +173,19 @@ def get_cluster_data() -> dict[str, Any]:
     )
 
     total = int(shard_total["count"]) if shard_total else 0
+    jobs = fetch_all('SELECT * FROM citus_rebalance_status();')
+    busy = any(str(job['state']) not in ('finished', 'failed', 'cancelled') for job in jobs)
+    third_node = next((node for node in nodes
+                       if node['nodename'] == 'worker-3' and node['nodeport'] == 5432), None)
 
     return {
         "nodes": nodes,
         "shards": shards,
         "shard_total": total,
         "shards_limited": total > len(shards),
+        "jobs": jobs,
+        "busy": busy,
+        "third_node": third_node,
     }
 
 

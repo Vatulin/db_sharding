@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 try:
@@ -16,6 +17,59 @@ USERS_LIMIT = 50
 ORDERS_LIMIT = 100
 SHARDS_LIMIT = 250
 MAX_ORDER_AMOUNT = Decimal("999999999999.99")
+QUERY_SQL = Path(__file__).resolve().parent.parent / "sql" / "queries"
+CHECK_QUERIES = {
+    "select_user_orders": "Заказы пользователя",
+    "join_user_orders": "Пользователь, заказы и статусы",
+    "aggregate_orders": "Суммы и количество заказов по статусам",
+    "insert_order": "Создание заказа",
+}
+
+
+def run_check_query(name: str, values: Any) -> dict[str, Any]:
+    """Выполняет фиксированный SQL-файл с параметрами драйвера."""
+    if name not in CHECK_QUERIES:
+        raise ValidationError("Неизвестный запрос.")
+    parameters = {}
+    if name != "aggregate_orders":
+        parameters["user_id"] = _parse_positive_integer(values.get("user_id"), "ID пользователя")
+        if parameters["user_id"] > 9223372036854775807:
+            raise ValidationError("ID пользователя превышает диапазон bigint.")
+    if name in ("select_user_orders", "join_user_orders"):
+        parameters["row_limit"] = _parse_positive_integer(values.get("row_limit", "50"), "Лимит строк")
+        if parameters["row_limit"] > 100:
+            raise ValidationError("Можно вывести не более 100 строк.")
+    if name == "insert_order":
+        parameters["status_id"] = _parse_positive_integer(values.get("status_id"), "ID статуса")
+        if parameters["status_id"] > 32767:
+            raise ValidationError("ID статуса превышает диапазон smallint.")
+        parameters["total_amount"] = _parse_order_amount(values.get("total_amount"))
+
+    # Файлы содержат числовые параметры psql. Меняем только известные маркеры,
+    # значения передаём отдельно драйверу; комментарии не являются частью запроса.
+    source = (QUERY_SQL / f"{name}.sql").read_text(encoding="utf-8")
+    query = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("--"))
+    for key in parameters:
+        query = query.replace(f":{key}", f"%({key})s")
+    with get_connection() as connection:
+        connection.execute("SET LOCAL statement_timeout = '15s'")
+        started = perf_counter()
+        with connection.cursor() as cursor:
+            cursor.execute(query, parameters)
+            columns = [column.name for column in cursor.description]
+            rows = cursor.fetchall()
+        connection.commit()
+        elapsed_ms = (perf_counter() - started) * 1000
+    return {
+        "name": name,
+        "title": CHECK_QUERIES[name],
+        "columns": columns,
+        "rows": [[str(row[column]) if row[column] is not None else "NULL"
+                  for column in columns] for row in rows],
+        "elapsed_ms": round(elapsed_ms, 3),
+    }
+
+
 CLUSTER_SQL = Path(__file__).resolve().parent.parent / 'sql' / 'cluster'
 CLUSTER_ACTIONS = {
     'add': ('add_worker.sql', 'worker-3 зарегистрирован. Теперь можно запустить балансировку.'),

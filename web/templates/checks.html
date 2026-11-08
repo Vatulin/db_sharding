@@ -4,7 +4,57 @@
 
 {% block content %}
   <h2>Проверки</h2>
-  <p class="notice">
-    Проверки целостности данных и диагностические запросы ещё не подключены.
-  </p>
+  <p>Запросы выполняются на координаторе Citus. Время включает выполнение SQL,
+    получение строк и фиксацию транзакции, но не подключение к БД и отрисовку страницы.
+    Это время запроса из приложения, а не отдельное измерение времени работы сервера.</p>
+
+  {% if error_message %}<p role="alert" class="message message-error">{{ error_message }}</p>{% endif %}
+  {% if result %}
+    <section class="panel">
+      <h3>{{ result.title }}</h3>
+      <p>Время: {{ result.elapsed_ms }} мс. Получено строк: {{ result.rows | length }}.</p>
+      {% if result.rows %}
+        <div style="overflow-x: auto;">
+          <table>
+            <thead><tr>{% for column in result.columns %}<th scope="col">{{ column }}</th>{% endfor %}</tr></thead>
+            <tbody>{% for row in result.rows %}<tr>{% for value in row %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+          </table>
+        </div>
+      {% else %}<p>Запрос не вернул строк.</p>{% endif %}
+    </section>
+  {% endif %}
+
+  <form method="get" action="{{ url_for('checks') }}">
+    <h3>Просмотр заказов</h3>
+    <label for="query">Запрос</label>
+    <select id="query" name="query">
+      <option value="select_user_orders" {% if values.get('query') == 'select_user_orders' %}selected{% endif %}>select_user_orders.sql — заказы пользователя</option>
+      <option value="join_user_orders" {% if values.get('query') == 'join_user_orders' %}selected{% endif %}>join_user_orders.sql — пользователь, заказы и статусы</option>
+    </select>
+    <label for="user_id">ID пользователя</label>
+    <input id="user_id" name="user_id" type="number" min="1" value="{{ values.get('user_id', '1') }}" required>
+    <label for="row_limit">Лимит строк (1–100)</label>
+    <input id="row_limit" name="row_limit" type="number" min="1" max="100" value="{{ values.get('row_limit', '50') }}" required>
+    <button type="submit">Выполнить выборку</button>
+  </form>
+
+  <form method="get" action="{{ url_for('checks') }}">
+    <h3>Агрегация по всем заказам</h3>
+    <p>aggregate_orders.sql: количество и суммы заказов по статусам на всех шардах.</p>
+    <input type="hidden" name="query" value="aggregate_orders">
+    <button type="submit">Выполнить агрегацию</button>
+  </form>
+
+  <form method="post" action="{{ url_for('check_insert_order') }}">
+    <h3>Создание заказа</h3>
+    <p>insert_order.sql добавляет настоящий заказ в базу и показывает строку RETURNING.</p>
+    <input type="hidden" name="csrf_token" value="{{ session.checks_token }}">
+    <label for="insert_user_id">ID пользователя</label>
+    <input id="insert_user_id" name="user_id" type="number" min="1" value="1" required>
+    <label for="status_id">ID статуса</label>
+    <input id="status_id" name="status_id" type="number" min="1" max="32767" value="1" required>
+    <label for="total_amount">Сумма заказа</label>
+    <input id="total_amount" name="total_amount" type="number" min="0.01" max="999999999999.99" step="0.01" value="1250.50" required>
+    <button type="submit">Создать и сохранить заказ</button>
+  </form>
 {% endblock %}

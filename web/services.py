@@ -23,6 +23,7 @@ CHECK_QUERIES = {
     "join_user_orders": "Пользователь, заказы и статусы",
     "aggregate_orders": "Суммы и количество заказов по статусам",
     "insert_order": "Создание заказа",
+    "check_integrity": "Проверка целостности данных",
 }
 
 
@@ -31,7 +32,7 @@ def run_check_query(name: str, values: Any) -> dict[str, Any]:
     if name not in CHECK_QUERIES:
         raise ValidationError("Неизвестный запрос.")
     parameters = {}
-    if name != "aggregate_orders":
+    if name not in ("aggregate_orders", "check_integrity"):
         parameters["user_id"] = _parse_positive_integer(values.get("user_id"), "ID пользователя")
         if parameters["user_id"] > 9223372036854775807:
             raise ValidationError("ID пользователя превышает диапазон bigint.")
@@ -47,7 +48,9 @@ def run_check_query(name: str, values: Any) -> dict[str, Any]:
 
     # Файлы содержат числовые параметры psql. Меняем только известные маркеры,
     # значения передаём отдельно драйверу; комментарии не являются частью запроса.
-    source = (QUERY_SQL / f"{name}.sql").read_text(encoding="utf-8")
+    script_path = (QUERY_SQL.parent / "checks" / "check_integrity.sql"
+                   if name == "check_integrity" else QUERY_SQL / f"{name}.sql")
+    source = script_path.read_text(encoding="utf-8")
     query = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("--"))
     for key in parameters:
         query = query.replace(f":{key}", f"%({key})s")

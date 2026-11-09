@@ -50,6 +50,20 @@
   </form>
 
   <form method="get" action="{{ url_for('checks') }}">
+    <h3>Диагностика кластера</h3>
+    <p>Узлы и шарды: размещения, размеры и число размещений на каждом узле.
+      Активность и блокировки: запросы координатора и воркеров, длительность транзакций,
+      ожидания и блокирующие запросы. Вывод активности ограничен 250 строками.</p>
+    <p>Это текущий снимок; историю метрик можно посмотреть во вкладке «Мониторинг».</p>
+    <label for="monitoring-query">Проверка</label>
+    <select id="monitoring-query" name="query">
+      <option value="nodes_and_shards" {% if values.get('query') == 'nodes_and_shards' %}selected{% endif %}>Узлы и шарды</option>
+      <option value="activity_and_locks" {% if values.get('query') == 'activity_and_locks' %}selected{% endif %}>Активность и блокировки</option>
+    </select>
+    <button type="submit">Показать состояние</button>
+  </form>
+
+  <form method="get" action="{{ url_for('checks') }}">
     <h3>Агрегация по всем заказам</h3>
     <p>aggregate_orders.sql: количество и суммы заказов по статусам на всех шардах.</p>
     <input type="hidden" name="query" value="aggregate_orders">

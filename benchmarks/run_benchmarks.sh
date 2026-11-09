@@ -20,11 +20,13 @@ INSERT выполняется с ROLLBACK: строки не накаплива�
 HELP
 }
 fail() { echo "Ошибка: $*" >&2; exit 1; }
+
 target=citus
 clients=1
 seconds=5
 repeats=3
 user_id=1
+
 worker=''
 while (($#)); do
   case "$1" in
@@ -39,25 +41,31 @@ while (($#)); do
     *) fail "Неизвестный аргумент: $1" ;;
   esac
 done
+
 [[ "$target" == baseline || "$target" == citus ]] || fail '--target: baseline или citus'
 for number in "$clients" "$seconds" "$repeats" "$user_id"; do
   [[ "$number" =~ ^[1-9][0-9]*$ ]] || fail 'Числовые параметры должны быть положительными целыми.'
 done
+
 if [[ -n "$worker" ]]; then
   [[ "$target" == citus ]] || fail '--add-worker доступен только для Citus.'
   [[ ${#worker} -le 63 && "$worker" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || fail 'Недопустимое имя воркера.'
 fi
+
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
 service=coordinator
 [[ "$target" == baseline ]] && service=baseline
 compose=(docker compose --project-directory "$root" -f "$root/compose.yaml")
+
 psql_db() {
   "${compose[@]}" exec -T "$service" sh -c \
     'export LC_ALL=C; exec psql -X -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -P pager=off "$@"' sh \
     -v user_id="$user_id" -v row_limit=50 -v status_id=1 -v total_amount=1250.50 "$@"
 }
+
 scalar() { psql_db -Atq -c "$1"; }
+
 workers=0
 if [[ "$target" == citus ]]; then
   [[ $(scalar "SELECT count(*) FROM citus_rebalance_status() WHERE state::text NOT IN ('finished','failed','cancelled')") == 0 ]] || fail 'Сначала завершите текущую балансировку.'
@@ -66,17 +74,20 @@ if [[ "$target" == citus ]]; then
     [[ $(scalar "SELECT count(*) FROM pg_dist_node WHERE nodename='$worker'") == 0 ]] || fail 'Выбранный воркер уже зарегистрирован.'
   fi
 fi
+
 [[ $(scalar "SELECT count(*) FROM users WHERE user_id=$user_id") == 1 ]] || fail 'Загрузите данные или выберите существующий --user-id.'
 [[ $(scalar 'SELECT count(*) FROM order_statuses WHERE status_id=1') == 1 ]] || fail 'Нет статуса заказа 1.'
 "${compose[@]}" exec -T "$service" pgbench --version
 label=baseline
 [[ "$target" == citus ]] && label="citus_${workers}_workers"
 [[ -n "$worker" ]] && label=rebalance
+
 mkdir -p "$root/results/$label"
 out=$(mktemp -d "$root/results/$label/$(date -u +%Y%m%dT%H%M%SZ)_XXXXXX")
 report="$out/report.txt"
 summary="$out/summary.csv"
 printf 'phase,query,repeat,mean_ms\n' > "$summary"
+
 load_pid=''
 on_exit() {
   code=$?
@@ -113,6 +124,7 @@ measure() {
     'export LC_ALL=C PGAPPNAME=coursework_benchmark; exec pgbench -U "$POSTGRES_USER" -d "$POSTGRES_DB" "$@"' sh \
     -n -r --exit-on-abort -c "$clients" -T "$seconds" -D user_id="$user_id" -D row_limit=50 \
     -D status_id=1 -D total_amount=1250.50 -f /dev/stdin)
+
   printf '\n[%s / %s / повтор %s]\n%s\n' "$phase" "$query" "$repeat" "$raw" >> "$report"
   failed=$(awk '/^number of failed transactions:/ {print $5}' <<< "$raw")
   [[ "$failed" == 0 ]] || fail "Сценарий $query содержит ошибки; см. report.txt."
@@ -121,6 +133,7 @@ measure() {
   printf '%s,%s,%s,%s\n' "$phase" "$query" "$repeat" "$ms" >> "$summary"
   printf '%s: %s, повтор %s — %s мс\n' "$phase" "$query" "$repeat" "$ms"
 }
+
 series() {
   local phase=$1 query repeat
   psql_db -c 'ANALYZE users; ANALYZE orders; ANALYZE events;' >> "$report"
@@ -131,15 +144,18 @@ series() {
   printf '\nПЛАНЫ ЗАПРОСОВ: %s\n' "$phase" >> "$report"
   psql_db < "$root/benchmarks/explain_queries.sql" >> "$report"
 }
+
 snapshot() {
   psql_db -Atq < "$root/sql/checks/check_integrity.sql"
   for query in select_user_orders join_user_orders aggregate_orders; do
     psql_db -Atq < "$root/sql/queries/$query.sql"
   done
 }
+
 placements() {
-  psql_db -c 'SELECT nodeid, groupid, nodename, nodeport, isactive, shouldhaveshards FROM pg_dist_node ORDER BY nodeid; SELECT table_name, shardid, nodename, nodeport, shard_size FROM citus_shards ORDER BY table_name, shardid, nodename;'
+  psql_db < "$root/sql/monitoring/nodes_and_shards.sql"
 }
+
 before=$(snapshot)
 printf '\nПРОВЕРКИ ДО ОПЫТА\n%s\n' "$before" >> "$report"
 [[ "$before" != *'Нарушение'* ]] || fail 'Исходные данные не прошли проверку целостности.'
@@ -162,12 +178,17 @@ SQL
   started=$(date +%s%3N)
   psql_db < "$root/sql/cluster/rebalance.sql" >> "$report"
   job=$(scalar 'SELECT max(job_id) FROM citus_rebalance_status()')
+  printf '\nАКТИВНОСТЬ ПОСЛЕ ЗАПУСКА БАЛАНСИРОВКИ\n' >> "$report"
+  # Диагностика не должна прерывать сам эксперимент при кратковременной ошибке узла.
+  if ! { echo "SET statement_timeout='15s';"; cat "$root/sql/monitoring/activity_and_locks.sql"; } | psql_db >> "$report"; then
+    echo 'Снимок активности получить не удалось; см. сообщение об ошибке выше.' >> "$report"
+  fi
   psql_db -c "SET statement_timeout='10min'; SELECT citus_rebalance_wait();" >> "$report"
   elapsed=$(( $(date +%s%3N) - started ))
   wait "$load_pid"
   load_pid=''
   printf 'rebalance_window,rebalance_total,1,%s\n' "$elapsed" >> "$summary"
-  printf '\nБалансировка: %s мс от запуска до завершения ожидания (включая обращения Docker).\nЧтение rebalance_window: фиксированное окно %s с, может захватывать время до/после переноса.\n' "$elapsed" "$seconds" >> "$report"
+  printf '\nБалансировка: %s мс от запуска до завершения ожидания (включая обращения Docker и снимок диагностики).\nЧтение rebalance_window: фиксированное окно %s с, может захватывать время до/после переноса.\n' "$elapsed" "$seconds" >> "$report"
   psql_db -c 'SELECT * FROM citus_rebalance_status();' >> "$report"
   [[ $(scalar "SELECT state FROM citus_rebalance_status() WHERE job_id=$job") == finished ]] || fail 'Балансировка не завершилась успешно.'
   [[ $(scalar "SELECT count(*) FROM citus_shards WHERE nodename='$worker' AND table_name::text IN ('users','public.users','orders','public.orders','events','public.events')") != 0 ]] || fail 'Новый воркер не получил распределённые шарды.'
@@ -175,6 +196,7 @@ SQL
   placements >> "$report"
   series "after_$((workers + 1))_workers"
 fi
+
 after=$(snapshot)
 printf '\nПРОВЕРКИ ПОСЛЕ ОПЫТА\n%s\n' "$after" >> "$report"
 [[ "$before" == "$after" ]] || fail 'Контрольные результаты до и после различаются; см. report.txt.'

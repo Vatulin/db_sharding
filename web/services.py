@@ -25,6 +25,8 @@ CHECK_QUERIES = {
     "aggregate_orders": "Суммы и количество заказов по статусам",
     "insert_order": "Создание заказа",
     "check_integrity": "Проверка целостности данных",
+    "nodes_and_shards": "Узлы и размещения шардов",
+    "activity_and_locks": "Активность и блокировки кластера",
 }
 
 
@@ -33,7 +35,7 @@ def run_check_query(name: str, values: Any) -> dict[str, Any]:
     if name not in CHECK_QUERIES:
         raise ValidationError("Неизвестный запрос.")
     parameters = {}
-    if name not in ("aggregate_orders", "check_integrity"):
+    if name in ("select_user_orders", "join_user_orders", "insert_order"):
         parameters["user_id"] = _parse_positive_integer(values.get("user_id"), "ID пользователя")
         if parameters["user_id"] > 9223372036854775807:
             raise ValidationError("ID пользователя превышает диапазон bigint.")
@@ -51,6 +53,8 @@ def run_check_query(name: str, values: Any) -> dict[str, Any]:
     # значения передаём отдельно драйверу; комментарии не являются частью запроса.
     script_path = (QUERY_SQL.parent / "checks" / "check_integrity.sql"
                    if name == "check_integrity" else QUERY_SQL / f"{name}.sql")
+    if name in ("nodes_and_shards", "activity_and_locks"):
+        script_path = QUERY_SQL.parent / "monitoring" / f"{name}.sql"
     source = script_path.read_text(encoding="utf-8")
     query = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("--"))
     for key in parameters:

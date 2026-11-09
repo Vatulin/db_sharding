@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from time import perf_counter
 from typing import Any
+from psycopg.rows import tuple_row
 
 try:
     from .db import fetch_all, fetch_one, get_connection
@@ -75,6 +76,44 @@ def run_check_query(name: str, values: Any) -> dict[str, Any]:
         "rows": [[str(row[column]) if row[column] is not None else "NULL"
                   for column in columns] for row in rows],
         "elapsed_ms": round(elapsed_ms, 3),
+    }
+
+
+def run_sql_query(source: str) -> dict[str, Any]:
+    """Одна выборка или DELETE; результат не сохраняется в cookie."""
+    query = source.strip().removesuffix(';').rstrip()
+    if not query or len(source) > 20000:
+        raise ValidationError('Введите SQL-запрос длиной до 20 000 символов.')
+    is_delete = re.match(r'DELETE\b', query, re.IGNORECASE) is not None
+    affected_rows = None
+    with get_connection() as connection:
+        if not is_delete:
+            connection.execute('SET TRANSACTION READ ONLY')
+        connection.execute("SET LOCAL statement_timeout = '15s'")
+        started = perf_counter()
+        try:
+            with connection.cursor(row_factory=tuple_row) as cursor:
+                # Extended protocol разрешает только одну команду.
+                statement = query if is_delete else f'SELECT * FROM (\n{query}\n) AS sql_result LIMIT 101'
+                cursor.execute(statement, prepare=True)
+                affected_rows = cursor.rowcount if is_delete else None
+                columns = [column.name for column in cursor.description] if cursor.description else []
+                rows = cursor.fetchmany(101) if cursor.description else []
+            if is_delete:
+                connection.commit()
+            else:
+                connection.rollback()
+        except Exception:
+            connection.rollback()
+            raise
+        elapsed_ms = (perf_counter() - started) * 1000
+    return {
+        'title': 'Результат SQL-запроса',
+        'columns': columns,
+        'rows': [[str(value) if value is not None else 'NULL' for value in row] for row in rows[:100]],
+        'truncated': len(rows) > 100,
+        'affected_rows': affected_rows,
+        'elapsed_ms': round(elapsed_ms, 3),
     }
 
 

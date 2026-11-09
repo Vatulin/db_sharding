@@ -9,10 +9,10 @@ from flask import Flask, abort, flash, redirect, render_template, request, sessi
 
 try:
     from .db import DatabaseError, get_dashboard_summary
-    from .services import ValidationError, create_order, get_cluster_data, get_data, run_cluster_action, run_check_query
+    from .services import ValidationError, create_order, get_cluster_data, get_data, run_cluster_action, run_check_query, run_sql_query
 except ImportError:
     from db import DatabaseError, get_dashboard_summary
-    from services import ValidationError, create_order, get_cluster_data, get_data, run_cluster_action, run_check_query
+    from services import ValidationError, create_order, get_cluster_data, get_data, run_cluster_action, run_check_query, run_sql_query
 
 
 def create_app() -> Flask:
@@ -132,14 +132,14 @@ def create_app() -> Flask:
     @app.get("/checks")
     def checks():
         session.setdefault("checks_token", secrets.token_hex(32))
-        result = session.pop("check_insert_result", None)
+        result = None
         name = request.args.get("query")
         error_message = None
         status = 200
         if name:
             try:
-                if name == "insert_order":
-                    raise ValidationError("Создание заказа выполняется отдельной формой POST.")
+                if name not in ("check_integrity", "nodes_and_shards", "activity_and_locks"):
+                    raise ValidationError("Выберите проверку целостности или диагностику.")
                 result = run_check_query(name, request.args)
             except ValidationError as error:
                 error_message, status = str(error), 400
@@ -148,26 +148,22 @@ def create_app() -> Flask:
         return render_template("checks.html", result=result,
                                error_message=error_message, values=request.args), status
 
-    @app.post("/checks/insert-order")
-    def check_insert_order():
+    @app.post("/checks/sql")
+    def execute_sql():
         token = session.get("checks_token", "")
         if not token or not secrets.compare_digest(token, request.form.get("csrf_token", "")):
             abort(400, description="Форма устарела. Обновите страницу проверок.")
         session["checks_token"] = secrets.token_hex(32)
+        sql_text = request.form.get("sql", "")
+        result, error_message, status = None, None, 200
         try:
-            # RETURNING содержит одну строку: небольшой результат помещается в сессию.
-            result = run_check_query("insert_order", request.form)
+            result = run_sql_query(sql_text)
         except ValidationError as error:
-            flash(str(error), "error")
+            error_message, status = str(error), 400
         except DatabaseError as error:
-            flash(f"Не удалось выполнить запрос: {error}", "error")
-        else:
-            session["check_insert_result"] = result
-            if result["rows"]:
-                flash("Заказ создан и сохранён в базе.", "success")
-            else:
-                flash("Заказ не создан: пользователь или статус не найден.", "error")
-        return redirect(url_for("checks"), code=303)
+            error_message, status = str(error), 400
+        return render_template("checks.html", result=result, error_message=error_message,
+                               values={}, sql_text=sql_text), status
 
     return app
 

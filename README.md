@@ -1,87 +1,105 @@
-# Стенд PostgreSQL и Citus
+# PostgreSQL и Citus
 
-Требуются VirtualBox и Vagrant. Виртуальная машина Ubuntu получает 4 процессора и 6 ГБ памяти; Docker и Compose устанавливает `provision.sh`.
+Учебный стенд: координатор Citus, рабочие узлы, отдельная PostgreSQL для сравнения, веб-интерфейс Flask и мониторинг Prometheus/Grafana.
 
 ## Первый запуск
 
-В PowerShell из корня репозитория создайте `.env`, если его ещё нет, и задайте в нём свой `POSTGRES_PASSWORD`:
+Нужны VirtualBox, Vagrant и Python 3.11 или новее. VM использует 4 CPU и 6 ГБ RAM. Команды PowerShell выполняются из корня проекта `src/db_sharding`.
 
 ```powershell
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 notepad .env
+```
+
+В `.env` задайте свой `POSTGRES_PASSWORD` и добавьте `GRAFANA_ADMIN_PASSWORD` с паролем Grafana. Для приведённых команд оставьте `POSTGRES_USER=postgres` и `POSTGRES_DB=coursework`.
+
+```powershell
 cd infrastructure
-vagrant validate
 vagrant up --provider=virtualbox
 vagrant ssh
 ```
 
-В Ubuntu запустите координатор, два рабочих узла и отдельный PostgreSQL:
+Vagrant автоматически запускает `infrastructure/provision.sh`: устанавливает Docker и Compose. В Ubuntu:
 
 ```bash
 cd /project
-docker compose config --quiet
-docker compose pull
-docker compose up -d --wait
-docker compose ps
+# Исправление окончаний строк после копирования файлов из Windows:
+sed -i 's/\r$//' scripts/*.sh benchmarks/*.sh
+bash scripts/setup.sh
 ```
 
-Подключите расширение и зарегистрируйте рабочие узлы (команды используют пользователя `postgres` и базу `coursework` из `.env.example`):
+`setup.sh` запускает БД, включает Citus, регистрирует два воркера, создаёт схему и справочники. Используйте его для первой инициализации: повторное распределение уже распределённых таблиц завершится ошибкой.
+
+Загрузите одинаковый исходный набор в пустые предметные таблицы обеих БД:
 
 ```bash
-for service in coordinator worker-1 worker-2; do
+for service in coordinator baseline; do
   docker compose exec -T "$service" \
     psql -U postgres -d coursework -v ON_ERROR_STOP=1 \
-    < sql/setup/01_enable_extensions.sql || break
+    -v users_count=10000 -v orders_count=100000 -v events_count=200000 \
+    < sql/data/generate_data.sql || break
 done
-
-docker compose exec -T coordinator \
-  psql -U postgres -d coursework -v ON_ERROR_STOP=1 \
-  < sql/setup/02_register_workers.sql
 ```
 
-Проверьте кластер: запрос должен вернуть `worker-1` и `worker-2`.
+Генератор отказывается изменять непустые предметные таблицы.
 
-```bash
-docker compose exec -T coordinator \
-  psql -U postgres -d coursework \
-  -c "SELECT * FROM citus_get_active_worker_nodes();"
-```
+## Веб-интерфейс
 
-Из Windows координатор доступен по адресу `127.0.0.1:15432`, отдельный PostgreSQL — `127.0.0.1:15433`.
-
-## Повторный запуск и остановка
-
-В PowerShell из папки `infrastructure`:
+В отдельном PowerShell из корня проекта:
 
 ```powershell
-vagrant up
-vagrant ssh
+python -m venv web/venv
+.\web\venv\Scripts\python.exe -m pip install -r web/requirements.txt
+.\web\venv\Scripts\python.exe -m flask --app web.app run
 ```
 
-В Ubuntu:
+Откройте [веб-интерфейс](http://127.0.0.1:5000). «Данные» позволяют просматривать и создавать заказы; «Кластер» — управлять воркерами; «Проверки» — проверять целостность, диагностировать кластер и выполнять SQL. Команда `DELETE` в SQL-поле сохраняет удаление в базе.
 
-```bash
-cd /project
-docker compose up -d --wait
-docker compose ps
-exit
-```
+Из Windows координатор доступен по `127.0.0.1:15432`, монолит — по `127.0.0.1:15433`.
 
-Выключение VM из PowerShell:
-
-```powershell
-vagrant halt
-```
-
-## Диагностика
+## Добавление и удаление воркеров
 
 В Ubuntu из `/project`:
 
 ```bash
-docker compose ps -a
-docker compose logs --tail=100 coordinator
+bash scripts/start-worker.sh --name worker-4
 ```
 
-В PowerShell из `infrastructure`: `vagrant status` показывает состояние VM, `vagrant reload --provision` применяет изменения конфигурации и повторяет подготовку.
+`--name` (или `-n`) задаёт имя: строчные латинские буквы, цифры и дефисы, до 63 символов. Скрипт запускает контейнер с отдельным томом и включает Citus. После запуска в разделе «Кластер» введите то же имя, нажмите «Добавить воркер», затем «Запустить балансировку» и дождитесь завершения.
 
-`vagrant halt` сохраняет данные. `vagrant destroy` удаляет VM вместе с данными БД; `docker compose down -v` удаляет тома БД.
+Для удаления нажмите «Освободить» в строке нужного воркера, дождитесь переноса данных и нажмите «Удалить из кластера». Контейнер и его том автоматически не удаляются.
+
+## Эксперименты
+
+В Ubuntu из `/project`, после загрузки данных:
+
+```bash
+# Отдельные измерения монолита и текущего кластера:
+bash benchmarks/run_benchmarks.sh --target baseline
+bash benchmarks/run_benchmarks.sh --target citus
+
+# Измерения до и после расширения: используйте свободное имя воркера.
+bash benchmarks/run_benchmarks.sh --target citus --add-worker worker-5
+
+# Настройка нагрузки:
+bash benchmarks/run_benchmarks.sh --target citus --clients 4 --seconds 10 --repeats 3 --user-id 1
+```
+
+По умолчанию: один клиент, три повтора по пять секунд для каждого запроса, пользователь `1`. Пользователь должен существовать. `--add-worker` сам запускает и регистрирует воркер, выполняет балансировку и оставляет его в кластере после опыта. Во время эксперимента не изменяйте данные и состав кластера вручную.
+
+В `results/<конфигурация>/<время_запуска>/` сохраняются:
+
+- `summary.csv` — среднее время SQL-команды в миллисекундах;
+- `report.txt` — параметры, исходные замеры, планы запросов и проверки; при масштабировании также размещения шардов и диагностика переноса.
+
+Вставки выполняются с откатом: заказы не накапливаются, но последовательность ID растёт. Время `INSERT` не включает `COMMIT`. Для сравнения используйте одинаковые данные и ограничения таблиц: текущий скрипт подготовки добавляет внешние ключи только в Citus.
+
+## Мониторинг
+
+В Ubuntu из `/project`:
+
+```bash
+docker compose --profile monitoring up -d --build --no-deps citus-exporter prometheus grafana
+```
+
+[Grafana](http://localhost:3000/d/citus-cluster): пользователь `admin`, первоначальный пароль из `GRAFANA_ADMIN_PASSWORD`. [Prometheus](http://localhost:9090). Список зарегистрированных воркеров обновляется автоматически при опросе; интервал сбора — 30 секунд. В вебе есть ссылка «Мониторинг».

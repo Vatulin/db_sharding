@@ -1,0 +1,27 @@
+# Читает monitoring/exporter.py. Запрос совместим с PostgreSQL без Citus.
+query: |
+  SELECT pg_database_size(current_database()) AS database_bytes,
+         numbackends AS connections,
+         xact_commit AS commits_total, xact_rollback AS rollbacks_total,
+         blks_read AS blocks_read_total, blks_hit AS blocks_hit_total,
+         tup_inserted AS rows_inserted_total, tup_updated AS rows_updated_total,
+         tup_deleted AS rows_deleted_total, deadlocks AS deadlocks_total,
+         (SELECT count(*) FROM pg_stat_activity
+          WHERE datname=current_database() AND state='active'
+            AND pid <> pg_backend_pid()) AS active_queries,
+         (SELECT count(*) FROM pg_stat_activity
+          WHERE datname=current_database() AND wait_event_type='Lock') AS lock_waits
+  FROM pg_stat_database WHERE datname=current_database();
+metrics:
+  database_bytes: {type: gauge, help: "Размер базы данных в байтах"}
+  connections: {type: gauge, help: "Подключения к базе, включая мониторинг"}
+  active_queries: {type: gauge, help: "Активные запросы, кроме текущего запроса мониторинга"}
+  lock_waits: {type: gauge, help: "Сессии, ожидающие блокировку"}
+  commits_total: {type: counter, help: "Зафиксированные транзакции, включая мониторинг"}
+  rollbacks_total: {type: counter, help: "Отменённые транзакции"}
+  blocks_read_total: {type: counter, help: "Блоки, прочитанные вне shared buffers"}
+  blocks_hit_total: {type: counter, help: "Попадания в shared buffers"}
+  rows_inserted_total: {type: counter, help: "Вставленные строки по статистике PostgreSQL"}
+  rows_updated_total: {type: counter, help: "Обновлённые строки по статистике PostgreSQL"}
+  rows_deleted_total: {type: counter, help: "Удалённые строки по статистике PostgreSQL"}
+  deadlocks_total: {type: counter, help: "Взаимные блокировки"}

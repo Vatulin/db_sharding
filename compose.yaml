@@ -55,9 +55,46 @@ services:
     volumes:
       - baseline_data:/var/lib/postgresql
 
+  citus-exporter:
+    profiles: ["monitoring"]
+    build: ./monitoring
+    environment: *db-environment
+    restart: unless-stopped
+
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v3.7.3
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:12.3.0
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/datasource.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+      - ./monitoring/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/citus.yml:ro
+      - ./monitoring/grafana/cluster_dashboard.json:/var/lib/grafana/dashboards/cluster.json:ro
+
 volumes:
   coordinator_data:
   worker_1_data:
   worker_2_data:
   worker_3_data:
   baseline_data:
+  prometheus_data:
+  grafana_data:
